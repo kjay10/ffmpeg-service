@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
@@ -49,9 +49,9 @@ router.post('/', async (req, res) => {
         break;
     }
 
-    // Run FFmpeg to create video from image
-    const cmd = [
-      'ffmpeg', '-y',
+    // Run FFmpeg to create video from image (using execFileSync to avoid shell escaping issues)
+    const args = [
+      '-y',
       '-loop', '1',
       '-i', imagePath,
       '-filter_complex', filterComplex,
@@ -62,10 +62,10 @@ router.post('/', async (req, res) => {
       '-t', String(dur),
       '-movflags', '+faststart',
       outputPath
-    ].map(a => a.includes(' ') ? `"${a}"` : a).join(' ');
+    ];
 
     console.log(`[image-to-video] Running: ffmpeg for job ${jobId}, effect=${effect}, duration=${dur}s`);
-    execSync(cmd, { timeout: 120000, stdio: 'pipe' });
+    execFileSync('ffmpeg', args, { timeout: 120000, stdio: 'pipe' });
 
     // Read output video
     const videoBuffer = fs.readFileSync(outputPath);
