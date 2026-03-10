@@ -5,12 +5,21 @@ const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { pipeline } = require('stream/promises');
+const multer = require('multer');
 
 const TEMP_DIR = path.join(__dirname, '..', 'tmp');
 
+// Multer config for file uploads
+const upload = multer({
+  dest: TEMP_DIR,
+  limits: { fileSize: 500 * 1024 * 1024 } // 500MB
+});
+
 // Download a file from URL to local path
-async function downloadFile(url, destPath) {
-  const res = await fetch(url);
+async function downloadFile(url, destPath, authHeader) {
+  const headers = {};
+  if (authHeader) headers['Authorization'] = authHeader;
+  const res = await fetch(url, { headers });
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
   const fileStream = fs.createWriteStream(destPath);
   await pipeline(res.body, fileStream);
@@ -26,23 +35,40 @@ function getVideoInfo(filePath) {
   });
 }
 
+// Resolve video to a local file path (from URL, upload, or auth URL)
+async function resolveVideo(req, jobId) {
+  const videoPath = path.join(TEMP_DIR, `${jobId}-input.mp4`);
+
+  if (req.file) {
+    // File was uploaded via multipart
+    fs.renameSync(req.file.path, videoPath);
+    return videoPath;
+  }
+
+  const { videoUrl } = req.body;
+  if (!videoUrl) throw new Error('videoUrl or file upload required');
+
+  const authHeader = req.headers['x-video-auth'];
+  await downloadFile(videoUrl, videoPath, authHeader);
+  return videoPath;
+}
+
 // POST /extract/frames
 // Extracts thumbnail strip from video (1 frame per interval)
-// Body: { videoUrl, interval: 1 } (interval in seconds)
+// Accepts: JSON { videoUrl, interval } OR multipart file upload (field: "video") + interval query/body param
+// Optional: x-video-auth header forwarded when downloading videoUrl
 // Returns: { frames: [{ timestamp, image: base64 }], duration, width, height }
-router.post('/frames', async (req, res) => {
-  const { videoUrl, interval = 1 } = req.body;
-  if (!videoUrl) return res.status(400).json({ error: 'videoUrl required' });
-
+router.post('/frames', upload.single('video'), async (req, res) => {
+  const interval = parseInt(req.body.interval) || 1;
   const jobId = uuidv4();
-  const videoPath = path.join(TEMP_DIR, `${jobId}-input.mp4`);
   const framesDir = path.join(TEMP_DIR, `${jobId}-frames`);
+  let videoPath;
 
   try {
     fs.mkdirSync(framesDir, { recursive: true });
 
-    // Download video
-    await downloadFile(videoUrl, videoPath);
+    // Resolve video from upload or URL
+    videoPath = await resolveVideo(req, jobId);
 
     // Get video info
     const info = await getVideoInfo(videoPath);
@@ -84,26 +110,25 @@ router.post('/frames', async (req, res) => {
     res.status(500).json({ error: err.message });
   } finally {
     // Cleanup
-    fs.rmSync(videoPath, { force: true });
+    if (videoPath) fs.rmSync(videoPath, { force: true });
     fs.rmSync(framesDir, { recursive: true, force: true });
   }
 });
 
 // POST /extract/frame
 // Extracts a single full-resolution frame at given timestamp
-// Body: { videoUrl, timestamp: 2.5 }
+// Accepts: JSON { videoUrl, timestamp } OR multipart file upload (field: "video") + timestamp query/body param
+// Optional: x-video-auth header forwarded when downloading videoUrl
 // Returns: { image: base64, width, height }
-router.post('/frame', async (req, res) => {
-  const { videoUrl, timestamp = 0 } = req.body;
-  if (!videoUrl) return res.status(400).json({ error: 'videoUrl required' });
-
+router.post('/frame', upload.single('video'), async (req, res) => {
+  const timestamp = parseFloat(req.body.timestamp) || 0;
   const jobId = uuidv4();
-  const videoPath = path.join(TEMP_DIR, `${jobId}-input.mp4`);
   const framePath = path.join(TEMP_DIR, `${jobId}-frame.png`);
+  let videoPath;
 
   try {
-    // Download video
-    await downloadFile(videoUrl, videoPath);
+    // Resolve video from upload or URL
+    videoPath = await resolveVideo(req, jobId);
 
     // Get video info
     const info = await getVideoInfo(videoPath);
@@ -132,7 +157,7 @@ router.post('/frame', async (req, res) => {
     console.error('Single frame extraction error:', err);
     res.status(500).json({ error: err.message });
   } finally {
-    fs.rmSync(videoPath, { force: true });
+    if (videoPath) fs.rmSync(videoPath, { force: true });
     fs.rmSync(framePath, { force: true });
   }
 });

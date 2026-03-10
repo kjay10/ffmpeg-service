@@ -5,11 +5,19 @@ const path = require('path');
 const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
 const { pipeline } = require('stream/promises');
+const multer = require('multer');
 
 const TEMP_DIR = path.join(__dirname, '..', 'tmp');
 
-async function downloadFile(url, destPath) {
-  const res = await fetch(url);
+const upload = multer({
+  dest: TEMP_DIR,
+  limits: { fileSize: 500 * 1024 * 1024 }
+});
+
+async function downloadFile(url, destPath, authHeader) {
+  const headers = {};
+  if (authHeader) headers['Authorization'] = authHeader;
+  const res = await fetch(url, { headers });
   if (!res.ok) throw new Error(`Download failed: ${res.status}`);
   const fileStream = fs.createWriteStream(destPath);
   await pipeline(res.body, fileStream);
@@ -27,12 +35,20 @@ function getVideoInfo(filePath) {
 // POST /concat
 // Concatenates hook video (prepend) with original video
 // Matches original video's codec, resolution, bitrate
-// Body: { hookVideoUrl, originalVideoUrl }
+// Accepts: JSON { hookVideoUrl, originalVideoUrl } OR multipart (fields: "hookVideo", "originalVideo")
+// Optional: x-video-auth header forwarded when downloading URLs
 // Returns: binary MP4 file
-router.post('/', async (req, res) => {
+router.post('/', upload.fields([
+  { name: 'hookVideo', maxCount: 1 },
+  { name: 'originalVideo', maxCount: 1 }
+]), async (req, res) => {
   const { hookVideoUrl, originalVideoUrl } = req.body;
-  if (!hookVideoUrl || !originalVideoUrl) {
-    return res.status(400).json({ error: 'hookVideoUrl and originalVideoUrl required' });
+  const files = req.files || {};
+  const hasUploads = files.hookVideo && files.originalVideo;
+  const hasUrls = hookVideoUrl && originalVideoUrl;
+
+  if (!hasUploads && !hasUrls) {
+    return res.status(400).json({ error: 'hookVideoUrl+originalVideoUrl or file uploads required' });
   }
 
   const jobId = uuidv4();
@@ -43,11 +59,16 @@ router.post('/', async (req, res) => {
   const outputPath = path.join(TEMP_DIR, `${jobId}-output.mp4`);
 
   try {
-    // Download both videos
-    await Promise.all([
-      downloadFile(hookVideoUrl, hookPath),
-      downloadFile(originalVideoUrl, originalPath)
-    ]);
+    if (hasUploads) {
+      fs.renameSync(files.hookVideo[0].path, hookPath);
+      fs.renameSync(files.originalVideo[0].path, originalPath);
+    } else {
+      const authHeader = req.headers['x-video-auth'];
+      await Promise.all([
+        downloadFile(hookVideoUrl, hookPath, authHeader),
+        downloadFile(originalVideoUrl, originalPath, authHeader)
+      ]);
+    }
 
     // Get original video info to match its properties
     const originalInfo = await getVideoInfo(originalPath);
