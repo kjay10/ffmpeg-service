@@ -4,6 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const extractRoutes = require('./routes/extract');
 const concatRoutes = require('./routes/concat');
+const imageToVideoRoutes = require('./routes/image-to-video');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -36,6 +37,7 @@ app.get('/health', (req, res) => {
 // Protected routes
 app.use('/extract', authMiddleware, extractRoutes);
 app.use('/concat', authMiddleware, concatRoutes);
+app.use('/image-to-video', authMiddleware, imageToVideoRoutes);
 
 // Cleanup old temp files every 10 minutes
 setInterval(() => {
