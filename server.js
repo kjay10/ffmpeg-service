@@ -18,7 +18,7 @@ if (!fs.existsSync(TEMP_DIR)) {
 
 // Middleware
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
+app.use(express.json({ limit: '200mb' }));
 
 // API key auth middleware
 function authMiddleware(req, res, next) {
