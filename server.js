@@ -31,7 +31,7 @@ function authMiddleware(req, res, next) {
 
 // Health check (no auth required)
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', ffmpeg: true });
+  res.json({ status: 'ok', ffmpeg: true, version: '2.1.0', routes: ['/extract', '/concat', '/image-to-video'] });
 });
 
 // Protected routes
