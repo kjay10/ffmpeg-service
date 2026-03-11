@@ -5,6 +5,7 @@ const fs = require('fs');
 const extractRoutes = require('./routes/extract');
 const concatRoutes = require('./routes/concat');
 const imageToVideoRoutes = require('./routes/image-to-video');
+const veoProxyRoutes = require('./routes/veo-proxy');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -31,7 +32,7 @@ function authMiddleware(req, res, next) {
 
 // Health check (no auth required)
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', ffmpeg: true, version: '2.1.0', routes: ['/extract', '/concat', '/image-to-video'] });
+  res.json({ status: 'ok', ffmpeg: true, version: '2.2.0', routes: ['/extract', '/concat', '/image-to-video', '/veo'] });
 });
 
 // Echo back Authorization header (used by n8n to extract OAuth token)
@@ -43,6 +44,7 @@ app.get('/token-echo', authMiddleware, (req, res) => {
 app.use('/extract', authMiddleware, extractRoutes);
 app.use('/concat', authMiddleware, concatRoutes);
 app.use('/image-to-video', authMiddleware, imageToVideoRoutes);
+app.use('/veo', authMiddleware, veoProxyRoutes);
 
 // Cleanup old temp files every 10 minutes
 setInterval(() => {
