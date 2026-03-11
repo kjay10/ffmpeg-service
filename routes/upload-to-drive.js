@@ -8,38 +8,68 @@ const { pipeline } = require('stream/promises');
 const TEMP_DIR = path.join(__dirname, '..', 'tmp');
 
 // POST /upload-to-drive
-// Downloads a file from a URL and uploads it to Google Drive
-// Body: { fileUrl, fileAuth?, driveFolderId, driveAuth, fileName, mimeType? }
+// Uploads a file to Google Drive from either a URL or base64 data
+// Body: { fileUrl?, fileAuth?, base64Data?, driveFolderId, driveAuth, fileName, mimeType? }
+// Provide either fileUrl (download from URL) or base64Data (direct base64 content)
 router.post('/', async (req, res) => {
-  const { fileUrl, fileAuth, driveFolderId, driveAuth, fileName, mimeType } = req.body;
+  const { fileUrl, fileAuth, base64Data, driveFolderId, driveAuth, fileName, mimeType } = req.body;
   const jobId = uuidv4().substring(0, 8);
   let tempPath = null;
 
   try {
-    if (!fileUrl) throw new Error('fileUrl is required');
+    if (!fileUrl && !base64Data) throw new Error('Either fileUrl or base64Data is required');
     if (!driveFolderId) throw new Error('driveFolderId is required');
     if (!driveAuth) throw new Error('driveAuth is required');
 
     const uploadFileName = fileName || `upload-${jobId}`;
-    const detectedMime = mimeType || (fileUrl.match(/\.png/i) ? 'image/png' : fileUrl.match(/\.jpe?g/i) ? 'image/jpeg' : 'application/octet-stream');
 
-    // Step 1: Download file
-    console.log(`[upload-to-drive/${jobId}] Downloading: ${fileUrl.substring(0, 120)}...`);
-    const headers = {};
-    if (fileAuth) headers['Authorization'] = fileAuth;
-
-    const dlRes = await fetch(fileUrl, { headers, redirect: 'follow' });
-    if (!dlRes.ok) {
-      throw new Error(`Download failed: ${dlRes.status} ${dlRes.statusText}`);
+    // Detect MIME type
+    let detectedMime = mimeType;
+    if (!detectedMime) {
+      if (base64Data) {
+        // Detect from base64 magic bytes
+        detectedMime = base64Data.startsWith('/9j/') ? 'image/jpeg'
+          : base64Data.startsWith('iVBOR') ? 'image/png'
+          : 'application/octet-stream';
+      } else if (fileUrl) {
+        detectedMime = fileUrl.match(/\.png/i) ? 'image/png'
+          : fileUrl.match(/\.jpe?g/i) ? 'image/jpeg'
+          : 'application/octet-stream';
+      }
     }
 
-    tempPath = path.join(TEMP_DIR, `${jobId}-upload${path.extname(fileUrl.split('?')[0]) || '.bin'}`);
-    const fileStream = fs.createWriteStream(tempPath);
-    await pipeline(dlRes.body, fileStream);
+    // Step 1: Get file to temp (either from base64 or URL download)
+    let fileSize;
 
-    const fileSize = fs.statSync(tempPath).size;
-    if (fileSize === 0) throw new Error('Downloaded file is empty');
-    console.log(`[upload-to-drive/${jobId}] Downloaded: ${fileSize} bytes`);
+    if (base64Data) {
+      // Base64 mode: decode and write to temp file
+      console.log(`[upload-to-drive/${jobId}] Decoding base64 data (${Math.round(base64Data.length / 1024)}KB encoded)...`);
+      const buffer = Buffer.from(base64Data, 'base64');
+      const ext = detectedMime === 'image/jpeg' ? '.jpg' : detectedMime === 'image/png' ? '.png' : '.bin';
+      tempPath = path.join(TEMP_DIR, `${jobId}-upload${ext}`);
+      fs.writeFileSync(tempPath, buffer);
+      fileSize = buffer.length;
+      if (fileSize === 0) throw new Error('Base64 data decoded to empty file');
+      console.log(`[upload-to-drive/${jobId}] Decoded: ${fileSize} bytes`);
+    } else {
+      // URL mode: download file
+      console.log(`[upload-to-drive/${jobId}] Downloading: ${fileUrl.substring(0, 120)}...`);
+      const headers = {};
+      if (fileAuth) headers['Authorization'] = fileAuth;
+
+      const dlRes = await fetch(fileUrl, { headers, redirect: 'follow' });
+      if (!dlRes.ok) {
+        throw new Error(`Download failed: ${dlRes.status} ${dlRes.statusText}`);
+      }
+
+      tempPath = path.join(TEMP_DIR, `${jobId}-upload${path.extname(fileUrl.split('?')[0]) || '.bin'}`);
+      const fileStream = fs.createWriteStream(tempPath);
+      await pipeline(dlRes.body, fileStream);
+
+      fileSize = fs.statSync(tempPath).size;
+      if (fileSize === 0) throw new Error('Downloaded file is empty');
+      console.log(`[upload-to-drive/${jobId}] Downloaded: ${fileSize} bytes`);
+    }
 
     // Step 2: Initiate resumable upload to Drive
     const initRes = await fetch(
