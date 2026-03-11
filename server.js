@@ -32,7 +32,7 @@ function authMiddleware(req, res, next) {
 
 // Health check (no auth required)
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', ffmpeg: true, version: '2.4.0', routes: ['/extract', '/concat', '/image-to-video', '/veo'] });
+  res.json({ status: 'ok', ffmpeg: true, version: '2.5.0', routes: ['/extract', '/concat', '/image-to-video', '/veo'] });
 });
 
 // Echo back Authorization header (used by n8n to extract OAuth token)
