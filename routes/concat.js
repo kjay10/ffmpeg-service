@@ -17,21 +17,41 @@ const upload = multer({
 async function downloadFile(url, destPath, authHeader) {
   const headers = {};
   if (authHeader) headers['Authorization'] = authHeader;
-  // If downloading from our own service (e.g. /veo/download proxy), add API key
+
+  // If this is a proxied VEO download URL through our own service,
+  // extract the actual VEO URL and download directly to avoid self-referential request
+  if (url.includes('/veo/download?url=')) {
+    try {
+      const parsedUrl = new URL(url);
+      const actualUrl = parsedUrl.searchParams.get('url');
+      if (actualUrl) {
+        console.log(`[downloadFile] Unwrapping VEO proxy URL, downloading directly from Google`);
+        url = actualUrl;
+        // VEO URLs use API key in query params, no auth header needed
+        delete headers['Authorization'];
+      }
+    } catch (e) {
+      console.log(`[downloadFile] Failed to parse proxy URL, using as-is: ${e.message}`);
+    }
+  }
+
+  // If still downloading from our own service, add API key
   if (url.includes('ffmpeg-service-production') || url.includes('localhost:3001')) {
     headers['x-api-key'] = process.env.API_KEY || 'dev-key';
   }
-  console.log(`[downloadFile] Downloading: ${url.substring(0, 120)}...`);
+
+  console.log(`[downloadFile] Downloading: ${url.substring(0, 150)}...`);
   const res = await fetch(url, { headers, redirect: 'follow' });
   if (!res.ok) {
     let errorBody = '';
     try { errorBody = await res.text(); } catch(e) {}
-    throw new Error(`Download failed: ${res.status} ${res.statusText} for ${url.substring(0, 100)} - ${errorBody.substring(0, 200)}`);
+    throw new Error(`Download failed: ${res.status} ${res.statusText} for ${url.substring(0, 120)} - ${errorBody.substring(0, 300)}`);
   }
   const fileStream = fs.createWriteStream(destPath);
   await pipeline(res.body, fileStream);
   const stat = fs.statSync(destPath);
   console.log(`[downloadFile] Saved ${stat.size} bytes to ${destPath}`);
+  if (stat.size === 0) throw new Error(`Downloaded file is empty: ${url.substring(0, 100)}`);
 }
 
 function getVideoInfo(filePath) {
@@ -186,8 +206,8 @@ router.post('/', upload.fields([
     res.setHeader('X-Video-Size', outputBuffer.length);
     res.send(outputBuffer);
   } catch (err) {
-    console.error('Concat error:', err);
-    res.status(500).json({ error: err.message });
+    console.error('Concat error:', err.message, err.stack);
+    res.status(500).json({ error: err.message, stack: err.stack?.split('\n').slice(0, 3).join(' | ') });
   } finally {
     // Cleanup all temp files
     for (const f of [hookPath, originalPath, hookNormalizedPath,
