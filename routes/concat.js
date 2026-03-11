@@ -63,10 +63,13 @@ router.post('/', upload.fields([
       fs.renameSync(files.hookVideo[0].path, hookPath);
       fs.renameSync(files.originalVideo[0].path, originalPath);
     } else {
-      const authHeader = req.headers['x-video-auth'];
+      // Support per-URL auth headers (hookAuth, originalAuth in body)
+      // Falls back to shared x-video-auth header
+      const sharedAuth = req.headers['x-video-auth'];
+      const { hookAuth, originalAuth } = req.body;
       await Promise.all([
-        downloadFile(hookVideoUrl, hookPath, authHeader),
-        downloadFile(originalVideoUrl, originalPath, authHeader)
+        downloadFile(hookVideoUrl, hookPath, hookAuth || sharedAuth),
+        downloadFile(originalVideoUrl, originalPath, originalAuth || sharedAuth)
       ]);
     }
 
