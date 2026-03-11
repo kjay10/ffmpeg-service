@@ -134,11 +134,25 @@ router.post('/frame', upload.single('video'), async (req, res) => {
     const info = await getVideoInfo(videoPath);
     const videoStream = info.streams.find(s => s.codec_type === 'video');
 
-    // Extract single frame at full resolution
+    // Extract single frame, optionally resize to target dimensions
+    const targetWidth = parseInt(req.body.width) || null;
+    const targetHeight = parseInt(req.body.height) || null;
+
     await new Promise((resolve, reject) => {
-      ffmpeg(videoPath)
-        .seekInput(timestamp)
-        .outputOptions(['-frames:v', '1', '-q:v', '1'])
+      let cmd = ffmpeg(videoPath)
+        .seekInput(timestamp);
+
+      if (targetWidth && targetHeight) {
+        // Scale to exact dimensions with padding (no crop, no distortion)
+        cmd = cmd.outputOptions([
+          '-frames:v', '1', '-q:v', '1',
+          '-vf', `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,setsar=1`
+        ]);
+      } else {
+        cmd = cmd.outputOptions(['-frames:v', '1', '-q:v', '1']);
+      }
+
+      cmd
         .output(framePath)
         .on('end', resolve)
         .on('error', reject)
