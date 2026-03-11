@@ -34,6 +34,11 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', ffmpeg: true, version: '2.1.0', routes: ['/extract', '/concat', '/image-to-video'] });
 });
 
+// Echo back Authorization header (used by n8n to extract OAuth token)
+app.get('/token-echo', authMiddleware, (req, res) => {
+  res.json({ authorization: req.headers['authorization'] || '' });
+});
+
 // Protected routes
 app.use('/extract', authMiddleware, extractRoutes);
 app.use('/concat', authMiddleware, concatRoutes);
