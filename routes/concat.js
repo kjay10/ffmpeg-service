@@ -218,6 +218,60 @@ router.post('/', upload.fields([
   }
 });
 
+// POST /concat/test-urls - Debug endpoint to test if URLs are downloadable
+router.post('/test-urls', async (req, res) => {
+  const { hookVideoUrl, originalVideoUrl, hookAuth, originalAuth } = req.body;
+  const sharedAuth = req.headers['x-video-auth'];
+  const requestAuth = req.headers['authorization'];
+  const results = {};
+
+  // Test hook video URL
+  try {
+    let url = hookVideoUrl;
+    const headers = {};
+    if (hookAuth || sharedAuth) headers['Authorization'] = hookAuth || sharedAuth;
+
+    // Unwrap VEO proxy URL
+    if (url && url.includes('/veo/download?url=')) {
+      try {
+        const parsedUrl = new URL(url);
+        const actualUrl = parsedUrl.searchParams.get('url');
+        if (actualUrl) { url = actualUrl; delete headers['Authorization']; }
+      } catch(e) {}
+    }
+    if (url && (url.includes('ffmpeg-service-production') || url.includes('localhost:3001'))) {
+      headers['x-api-key'] = process.env.API_KEY || 'dev-key';
+    }
+
+    const hookRes = await fetch(url, { headers, redirect: 'follow' });
+    const contentType = hookRes.headers.get('content-type');
+    const contentLength = hookRes.headers.get('content-length');
+    let bodyPreview = '';
+    if (!hookRes.ok) { try { bodyPreview = (await hookRes.text()).substring(0, 500); } catch(e) {} }
+    results.hook = { url: url.substring(0, 150), status: hookRes.status, statusText: hookRes.statusText, contentType, contentLength, bodyPreview };
+  } catch(e) {
+    results.hook = { error: e.message, url: (hookVideoUrl || '').substring(0, 150) };
+  }
+
+  // Test original video URL
+  try {
+    const url = originalVideoUrl;
+    const headers = {};
+    if (originalAuth || requestAuth || sharedAuth) headers['Authorization'] = originalAuth || requestAuth || sharedAuth;
+
+    const origRes = await fetch(url, { headers, redirect: 'follow' });
+    const contentType = origRes.headers.get('content-type');
+    const contentLength = origRes.headers.get('content-length');
+    let bodyPreview = '';
+    if (!origRes.ok) { try { bodyPreview = (await origRes.text()).substring(0, 500); } catch(e) {} }
+    results.original = { url: url.substring(0, 150), status: origRes.status, statusText: origRes.statusText, contentType, contentLength, bodyPreview };
+  } catch(e) {
+    results.original = { error: e.message, url: (originalVideoUrl || '').substring(0, 150) };
+  }
+
+  res.json(results);
+});
+
 // POST /concat/base64
 // Concatenates hook video with original video using base64-encoded inputs
 // Accepts: JSON { hookVideo: base64, originalVideo: base64 }
