@@ -175,17 +175,78 @@ router.post('/', upload.fields([
     const outputStat = fs.statSync(outputPath);
     console.log(`[concat] Output: ${outputStat.size} bytes, duration=${outputInfo.format.duration}`);
 
-    res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Content-Length', outputStat.size);
-    res.setHeader('X-Video-Duration', outputInfo.format.duration || '0');
-    res.setHeader('X-Video-Size', outputStat.size);
+    const { driveFolderId, driveAuth, fileName } = req.body;
 
-    await new Promise((resolve, reject) => {
-      const readStream = fs.createReadStream(outputPath);
-      readStream.pipe(res);
-      readStream.on('end', resolve);
-      readStream.on('error', reject);
-    });
+    if (driveFolderId && driveAuth) {
+      // Upload directly to Google Drive instead of returning video to n8n
+      stage = 'drive-upload';
+      const uploadFileName = fileName || 'hooked-output.mp4';
+
+      // Use resumable upload for large files
+      const initRes = await fetch(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': driveAuth,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name: uploadFileName,
+            parents: [driveFolderId],
+            mimeType: 'video/mp4'
+          })
+        }
+      );
+
+      if (!initRes.ok) {
+        const errText = await initRes.text();
+        throw new Error(`Drive init failed: ${initRes.status} ${errText.substring(0, 200)}`);
+      }
+
+      const uploadUrl = initRes.headers.get('location');
+      if (!uploadUrl) throw new Error('No upload URL from Drive');
+
+      // Stream file to Drive
+      const fileBuffer = fs.readFileSync(outputPath);
+      const uploadRes = await fetch(uploadUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'video/mp4',
+          'Content-Length': outputStat.size.toString()
+        },
+        body: fileBuffer
+      });
+
+      if (!uploadRes.ok) {
+        const errText = await uploadRes.text();
+        throw new Error(`Drive upload failed: ${uploadRes.status} ${errText.substring(0, 200)}`);
+      }
+
+      const driveFile = await uploadRes.json();
+      console.log(`[concat] Uploaded to Drive: ${driveFile.id} (${uploadFileName})`);
+
+      res.json({
+        success: true,
+        driveFileId: driveFile.id,
+        fileName: uploadFileName,
+        fileSize: outputStat.size,
+        duration: outputInfo.format.duration || '0'
+      });
+    } else {
+      // Return video as stream (original behavior)
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Content-Length', outputStat.size);
+      res.setHeader('X-Video-Duration', outputInfo.format.duration || '0');
+      res.setHeader('X-Video-Size', outputStat.size);
+
+      await new Promise((resolve, reject) => {
+        const readStream = fs.createReadStream(outputPath);
+        readStream.pipe(res);
+        readStream.on('end', resolve);
+        readStream.on('error', reject);
+      });
+    }
   } catch (err) {
     console.error(`[concat] FAILED at stage=${stage}:`, err.message);
     res.status(500).json({ error: err.message, stage });
