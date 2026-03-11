@@ -89,14 +89,15 @@ router.post('/', upload.fields([
   const concatListPath = path.join(TEMP_DIR, `${jobId}-concat.txt`);
   const outputPath = path.join(TEMP_DIR, `${jobId}-output.mp4`);
 
+  let stage = 'init';
   try {
+    stage = 'download';
     if (hasUploads) {
       fs.renameSync(files.hookVideo[0].path, hookPath);
       fs.renameSync(files.originalVideo[0].path, originalPath);
     } else {
-      // Auth priority: per-URL body fields > Authorization header > x-video-auth header
       const sharedAuth = req.headers['x-video-auth'];
-      const requestAuth = req.headers['authorization']; // e.g. from n8n OAuth2
+      const requestAuth = req.headers['authorization'];
       const { hookAuth, originalAuth } = req.body;
       await Promise.all([
         downloadFile(hookVideoUrl, hookPath, hookAuth || sharedAuth),
@@ -104,18 +105,23 @@ router.post('/', upload.fields([
       ]);
     }
 
-    // Get original video info to match its properties
+    stage = 'probe';
+    const hookStat = fs.statSync(hookPath);
+    const origStat = fs.statSync(originalPath);
+    console.log(`[concat] Downloaded: hook=${hookStat.size}, original=${origStat.size}`);
+
     const originalInfo = await getVideoInfo(originalPath);
     const videoStream = originalInfo.streams.find(s => s.codec_type === 'video');
     const audioStream = originalInfo.streams.find(s => s.codec_type === 'audio');
 
     const width = videoStream.width;
     const height = videoStream.height;
-    const fps = videoStream.r_frame_rate; // e.g. "30/1"
+    const fps = videoStream.r_frame_rate;
     const bitrate = originalInfo.format.bit_rate;
     const pixFmt = videoStream.pix_fmt || 'yuv420p';
+    console.log(`[concat] Original: ${width}x${height} ${fps}fps ${bitrate}bps codec=${videoStream.codec_name} pix=${pixFmt}`);
 
-    // Re-encode hook video to match original's properties
+    stage = 'normalize-hook';
     await new Promise((resolve, reject) => {
       let cmd = ffmpeg(hookPath)
         .outputOptions([
@@ -128,7 +134,6 @@ router.post('/', upload.fields([
           `-movflags`, `+faststart`
         ]);
 
-      // Handle audio: if hook has no audio, add silent audio track matching original
       if (audioStream) {
         cmd = cmd.outputOptions([
           `-c:a`, `aac`,
@@ -144,37 +149,32 @@ router.post('/', upload.fields([
         .on('error', reject)
         .run();
     });
+    console.log(`[concat] Hook normalized: ${fs.statSync(hookNormalizedPath).size} bytes`);
 
-    // Skip re-encoding original video (can be 50-100MB+, too heavy for Railway)
-    // Hook is already re-encoded to match original's properties, so concat demuxer with -c copy works
-    const originalNormalizedPath = originalPath; // use as-is
+    stage = 'concat';
+    const originalNormalizedPath = originalPath;
 
-    // Create concat file list
     fs.writeFileSync(concatListPath, [
       `file '${hookNormalizedPath}'`,
       `file '${originalNormalizedPath}'`
     ].join('\n'));
 
-    // Concatenate using concat demuxer
     await new Promise((resolve, reject) => {
       ffmpeg()
         .input(concatListPath)
         .inputOptions(['-f', 'concat', '-safe', '0'])
-        .outputOptions([
-          '-c', 'copy',
-          '-movflags', '+faststart'
-        ])
+        .outputOptions(['-c', 'copy', '-movflags', '+faststart'])
         .output(outputPath)
         .on('end', resolve)
         .on('error', reject)
         .run();
     });
 
-    // Get output file info
+    stage = 'send';
     const outputInfo = await getVideoInfo(outputPath);
     const outputStat = fs.statSync(outputPath);
+    console.log(`[concat] Output: ${outputStat.size} bytes, duration=${outputInfo.format.duration}`);
 
-    // Stream response instead of loading entire file into memory
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Content-Length', outputStat.size);
     res.setHeader('X-Video-Duration', outputInfo.format.duration || '0');
@@ -187,8 +187,8 @@ router.post('/', upload.fields([
       readStream.on('error', reject);
     });
   } catch (err) {
-    console.error('Concat error:', err.message, err.stack);
-    res.status(500).json({ error: err.message, stack: err.stack?.split('\n').slice(0, 3).join(' | ') });
+    console.error(`[concat] FAILED at stage=${stage}:`, err.message);
+    res.status(500).json({ error: err.message, stage });
   } finally {
     // Cleanup all temp files
     for (const f of [hookPath, originalPath, hookNormalizedPath,
