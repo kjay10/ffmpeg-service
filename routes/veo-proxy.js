@@ -7,12 +7,14 @@ const router = express.Router();
 // POST /veo/generate - Submit a VEO video generation job
 router.post('/generate', async (req, res) => {
   try {
-    const { apiKey, prompt, imageBase64, imageMimeType, aspectRatio } = req.body;
+    const { apiKey, prompt, imageBase64, imageMimeType, aspectRatio, model } = req.body;
 
     if (!apiKey) return res.status(400).json({ error: 'apiKey is required' });
     if (!prompt) return res.status(400).json({ error: 'prompt is required' });
 
-    const veoUrl = 'https://generativelanguage.googleapis.com/v1beta/models/veo-2.0-generate-001:predictLongRunning?key=' + apiKey;
+    const veoModel = model || 'veo-2.0-generate-001';
+    console.log(`[veo/generate] Using model: ${veoModel}`);
+    const veoUrl = 'https://generativelanguage.googleapis.com/v1beta/models/' + veoModel + ':predictLongRunning?key=' + apiKey;
 
     const requestBody = {
       instances: [{
