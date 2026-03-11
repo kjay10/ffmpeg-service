@@ -21,15 +21,30 @@ router.post('/', async (req, res) => {
     if (!driveFolderId) throw new Error('driveFolderId is required');
     if (!driveAuth) throw new Error('driveAuth is required');
 
-    const uploadFileName = fileName || `upload-${jobId}`;
+    // Defensive: strip leading "=" from n8n expression values
+    // n8n's ={{ expression }} syntax can prepend "=" to evaluated values
+    let cleanBase64 = base64Data;
+    if (cleanBase64 && cleanBase64.startsWith('=')) {
+      cleanBase64 = cleanBase64.substring(1);
+      console.log(`[upload-to-drive/${jobId}] Stripped leading = from base64Data`);
+    }
+
+    let cleanDriveAuth = driveAuth;
+    if (cleanDriveAuth && cleanDriveAuth.startsWith('=')) {
+      cleanDriveAuth = cleanDriveAuth.substring(1);
+      console.log(`[upload-to-drive/${jobId}] Stripped leading = from driveAuth`);
+    }
+
+    const cleanFileName = (fileName && fileName.startsWith('=')) ? fileName.substring(1) : fileName;
+    const uploadFileName = cleanFileName || `upload-${jobId}`;
 
     // Detect MIME type
     let detectedMime = mimeType;
     if (!detectedMime) {
-      if (base64Data) {
+      if (cleanBase64) {
         // Detect from base64 magic bytes
-        detectedMime = base64Data.startsWith('/9j/') ? 'image/jpeg'
-          : base64Data.startsWith('iVBOR') ? 'image/png'
+        detectedMime = cleanBase64.startsWith('/9j/') ? 'image/jpeg'
+          : cleanBase64.startsWith('iVBOR') ? 'image/png'
           : 'application/octet-stream';
       } else if (fileUrl) {
         detectedMime = fileUrl.match(/\.png/i) ? 'image/png'
@@ -41,10 +56,10 @@ router.post('/', async (req, res) => {
     // Step 1: Get file to temp (either from base64 or URL download)
     let fileSize;
 
-    if (base64Data) {
+    if (cleanBase64) {
       // Base64 mode: decode and write to temp file
-      console.log(`[upload-to-drive/${jobId}] Decoding base64 data (${Math.round(base64Data.length / 1024)}KB encoded)...`);
-      const buffer = Buffer.from(base64Data, 'base64');
+      console.log(`[upload-to-drive/${jobId}] Decoding base64 data (${Math.round(cleanBase64.length / 1024)}KB encoded, first 20 chars: ${cleanBase64.substring(0, 20)})`);
+      const buffer = Buffer.from(cleanBase64, 'base64');
       const ext = detectedMime === 'image/jpeg' ? '.jpg' : detectedMime === 'image/png' ? '.png' : '.bin';
       tempPath = path.join(TEMP_DIR, `${jobId}-upload${ext}`);
       fs.writeFileSync(tempPath, buffer);
@@ -77,7 +92,7 @@ router.post('/', async (req, res) => {
       {
         method: 'POST',
         headers: {
-          'Authorization': driveAuth,
+          'Authorization': cleanDriveAuth,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
