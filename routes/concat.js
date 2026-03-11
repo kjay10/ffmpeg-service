@@ -17,10 +17,21 @@ const upload = multer({
 async function downloadFile(url, destPath, authHeader) {
   const headers = {};
   if (authHeader) headers['Authorization'] = authHeader;
-  const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error(`Download failed: ${res.status}`);
+  // If downloading from our own service (e.g. /veo/download proxy), add API key
+  if (url.includes('ffmpeg-service-production') || url.includes('localhost:3001')) {
+    headers['x-api-key'] = process.env.API_KEY || 'dev-key';
+  }
+  console.log(`[downloadFile] Downloading: ${url.substring(0, 120)}...`);
+  const res = await fetch(url, { headers, redirect: 'follow' });
+  if (!res.ok) {
+    let errorBody = '';
+    try { errorBody = await res.text(); } catch(e) {}
+    throw new Error(`Download failed: ${res.status} ${res.statusText} for ${url.substring(0, 100)} - ${errorBody.substring(0, 200)}`);
+  }
   const fileStream = fs.createWriteStream(destPath);
   await pipeline(res.body, fileStream);
+  const stat = fs.statSync(destPath);
+  console.log(`[downloadFile] Saved ${stat.size} bytes to ${destPath}`);
 }
 
 function getVideoInfo(filePath) {
