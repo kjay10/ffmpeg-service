@@ -124,7 +124,7 @@ router.post('/', upload.fields([
           `-c:v`, `libx264`,
           `-pix_fmt`, pixFmt,
           `-b:v`, `${Math.round(parseInt(bitrate) * 0.9)}`,
-          `-preset`, `medium`,
+          `-preset`, `ultrafast`,
           `-movflags`, `+faststart`
         ]);
 
@@ -145,34 +145,9 @@ router.post('/', upload.fields([
         .run();
     });
 
-    // Also re-encode original to ensure matching format for concat
-    const originalNormalizedPath = path.join(TEMP_DIR, `${jobId}-original-normalized.mp4`);
-    await new Promise((resolve, reject) => {
-      let cmd = ffmpeg(originalPath)
-        .outputOptions([
-          `-c:v`, `libx264`,
-          `-pix_fmt`, pixFmt,
-          `-b:v`, bitrate,
-          `-r`, fps,
-          `-preset`, `medium`,
-          `-movflags`, `+faststart`
-        ]);
-
-      if (audioStream) {
-        cmd = cmd.outputOptions([
-          `-c:a`, `aac`,
-          `-b:a`, `${audioStream.bit_rate || '128000'}`,
-          `-ar`, `${audioStream.sample_rate || '44100'}`,
-          `-ac`, `${audioStream.channels || 2}`
-        ]);
-      }
-
-      cmd
-        .output(originalNormalizedPath)
-        .on('end', resolve)
-        .on('error', reject)
-        .run();
-    });
+    // Skip re-encoding original video (can be 50-100MB+, too heavy for Railway)
+    // Hook is already re-encoded to match original's properties, so concat demuxer with -c copy works
+    const originalNormalizedPath = originalPath; // use as-is
 
     // Create concat file list
     fs.writeFileSync(concatListPath, [
@@ -197,21 +172,26 @@ router.post('/', upload.fields([
 
     // Get output file info
     const outputInfo = await getVideoInfo(outputPath);
+    const outputStat = fs.statSync(outputPath);
 
-    // Send as binary response
-    const outputBuffer = fs.readFileSync(outputPath);
+    // Stream response instead of loading entire file into memory
     res.setHeader('Content-Type', 'video/mp4');
-    res.setHeader('Content-Length', outputBuffer.length);
-    res.setHeader('X-Video-Duration', outputInfo.format.duration);
-    res.setHeader('X-Video-Size', outputBuffer.length);
-    res.send(outputBuffer);
+    res.setHeader('Content-Length', outputStat.size);
+    res.setHeader('X-Video-Duration', outputInfo.format.duration || '0');
+    res.setHeader('X-Video-Size', outputStat.size);
+
+    await new Promise((resolve, reject) => {
+      const readStream = fs.createReadStream(outputPath);
+      readStream.pipe(res);
+      readStream.on('end', resolve);
+      readStream.on('error', reject);
+    });
   } catch (err) {
     console.error('Concat error:', err.message, err.stack);
     res.status(500).json({ error: err.message, stack: err.stack?.split('\n').slice(0, 3).join(' | ') });
   } finally {
     // Cleanup all temp files
     for (const f of [hookPath, originalPath, hookNormalizedPath,
-      path.join(TEMP_DIR, `${jobId}-original-normalized.mp4`),
       concatListPath, outputPath]) {
       fs.rmSync(f, { force: true });
     }
