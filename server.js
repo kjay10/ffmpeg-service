@@ -8,6 +8,8 @@ const imageToVideoRoutes = require('./routes/image-to-video');
 const veoProxyRoutes = require('./routes/veo-proxy');
 const stitchRoutes = require('./routes/stitch');
 const uploadToDriveRoutes = require('./routes/upload-to-drive');
+const statusRoutes = require('./routes/status');
+const driveFolderRoutes = require('./routes/drive-folder');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -34,7 +36,7 @@ function authMiddleware(req, res, next) {
 
 // Health check (no auth required)
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', ffmpeg: true, version: '3.1.2', routes: ['/extract', '/concat', '/stitch', '/image-to-video', '/veo', '/upload-to-drive'] });
+  res.json({ status: 'ok', ffmpeg: true, version: '3.2.0', routes: ['/extract', '/concat', '/stitch', '/image-to-video', '/veo', '/upload-to-drive', '/status', '/drive'] });
 });
 
 // Echo back Authorization header (used by n8n to extract OAuth token)
@@ -49,6 +51,11 @@ app.use('/image-to-video', authMiddleware, imageToVideoRoutes);
 app.use('/veo', authMiddleware, veoProxyRoutes);
 app.use('/stitch', authMiddleware, stitchRoutes);
 app.use('/upload-to-drive', authMiddleware, uploadToDriveRoutes);
+app.use('/drive', authMiddleware, driveFolderRoutes);
+
+// Status routes: mixed auth (POST /update needs API key, GET /:runId is public)
+// Mounted WITHOUT global auth — auth checked per-endpoint inside status.js
+app.use('/status', statusRoutes);
 
 // Cleanup old temp files every 10 minutes
 setInterval(() => {
