@@ -35,7 +35,7 @@ function getVideoInfo(filePath) {
   });
 }
 
-// Resolve video to a local file path (from URL, upload, or auth URL)
+// Resolve video to a local file path (from URL, upload, fileId, or auth URL)
 async function resolveVideo(req, jobId) {
   const videoPath = path.join(TEMP_DIR, `${jobId}-input.mp4`);
 
@@ -45,8 +45,19 @@ async function resolveVideo(req, jobId) {
     return videoPath;
   }
 
-  const { videoUrl } = req.body;
-  if (!videoUrl) throw new Error('videoUrl or file upload required');
+  // Support Google Drive fileId — build download URL automatically
+  const { videoUrl, fileId, driveAuth } = req.body;
+
+  if (fileId) {
+    const driveDownloadUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+    const authHeader = driveAuth || req.headers['x-video-auth'];
+    if (!authHeader) throw new Error('driveAuth or x-video-auth header required when using fileId');
+    console.log(`[extract] Downloading Drive file ${fileId} directly`);
+    await downloadFile(driveDownloadUrl, videoPath, authHeader);
+    return videoPath;
+  }
+
+  if (!videoUrl) throw new Error('videoUrl, fileId, or file upload required');
 
   const authHeader = req.headers['x-video-auth'];
   await downloadFile(videoUrl, videoPath, authHeader);
