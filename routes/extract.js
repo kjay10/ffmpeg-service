@@ -46,7 +46,11 @@ async function resolveVideo(req, jobId) {
   }
 
   // Support Google Drive fileId — build download URL automatically
-  const { videoUrl, fileId, driveAuth } = req.body;
+  let { videoUrl, fileId, driveAuth } = req.body;
+
+  // Defensive: strip leading "=" from n8n expression values
+  if (fileId && fileId.startsWith('=')) fileId = fileId.substring(1);
+  if (driveAuth && driveAuth.startsWith('=')) driveAuth = driveAuth.substring(1);
 
   if (fileId) {
     const driveDownloadUrl = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
