@@ -2,8 +2,9 @@ const express = require('express');
 const router = express.Router();
 
 // POST /drive/create-folder — Create a subfolder in Google Drive
+// If checkExisting is true, search for an existing folder with the same name first
 router.post('/create-folder', async (req, res) => {
-  let { parentFolderId, folderName, driveAuth } = req.body;
+  let { parentFolderId, folderName, driveAuth, checkExisting } = req.body;
 
   if (!parentFolderId || !folderName || !driveAuth) {
     return res.status(400).json({ error: 'parentFolderId, folderName, driveAuth are required' });
@@ -17,9 +18,33 @@ router.post('/create-folder', async (req, res) => {
     folderName = folderName.substring(1);
   }
 
-  console.log(`[drive/create-folder] Creating folder "${folderName}" in parent ${parentFolderId}`);
+  console.log(`[drive/create-folder] Creating folder "${folderName}" in parent ${parentFolderId} (checkExisting: ${!!checkExisting})`);
 
   try {
+    // If checkExisting, search for existing folder with same name in parent
+    if (checkExisting) {
+      const q = encodeURIComponent(
+        `name='${folderName.replace(/'/g, "\\'")}' and '${parentFolderId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`
+      );
+      const searchRes = await fetch(
+        `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=1`,
+        { headers: { 'Authorization': driveAuth } }
+      );
+      if (searchRes.ok) {
+        const searchData = await searchRes.json();
+        if (searchData.files && searchData.files.length > 0) {
+          const existing = searchData.files[0];
+          console.log(`[drive/create-folder] Found existing folder "${folderName}" → ${existing.id}`);
+          return res.json({
+            success: true,
+            folderId: existing.id,
+            folderName,
+            existing: true
+          });
+        }
+      }
+    }
+
     const createRes = await fetch('https://www.googleapis.com/drive/v3/files', {
       method: 'POST',
       headers: {
