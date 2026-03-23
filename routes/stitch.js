@@ -161,7 +161,7 @@ async function crossfadeStitch(parts, output, fade, maxTotal) {
 //   frameTimestamp   - Seconds into original where hook frame was taken (frames before this are removed)
 //   maxTotal         - Max total duration in seconds (default: 59.2)
 //   packDur          - Packshot duration in seconds (default: 3)
-//   fadeDur          - Crossfade duration in seconds (default: 0.5)
+//   fadeDur          - Crossfade duration in seconds (default: 1.5)
 //   driveFolderId    - If provided, upload result to Google Drive
 //   driveAuth        - Bearer token for Drive upload
 //   fileName         - Output file name
@@ -173,7 +173,7 @@ router.post('/', express.json({ limit: '10mb' }), async (req, res) => {
     frameTimestamp = 0,
     maxTotal = 59.2,
     packDur = 3,
-    fadeDur = 0.5,
+    fadeDur = 1.5,
     driveFolderId, driveAuth, fileName
   } = req.body;
 
