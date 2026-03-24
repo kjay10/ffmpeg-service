@@ -24,7 +24,8 @@ router.post('/generate', async (req, res) => {
       }],
       parameters: {
         aspectRatio: aspectRatio || '9:16',
-        personGeneration: personGeneration || 'allow_adult'
+        // Only 'allow_adult' and 'dont_allow' are supported by Google VEO
+        personGeneration: ['allow_adult', 'dont_allow'].includes(personGeneration) ? personGeneration : 'allow_adult'
       }
     };
 
