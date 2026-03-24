@@ -14,6 +14,8 @@ router.post('/generate', async (req, res) => {
 
     const veoModel = model || 'veo-2.0-generate-001';
     console.log(`[veo/generate] Using model: ${veoModel}`);
+    console.log(`[veo/generate] Image provided: ${!!imageBase64}, size: ${imageBase64 ? imageBase64.length : 0} chars, mimeType: ${imageMimeType || 'image/png'}`);
+    console.log(`[veo/generate] Prompt: ${prompt?.substring(0, 100)}`);
     const veoUrl = 'https://generativelanguage.googleapis.com/v1beta/models/' + veoModel + ':predictLongRunning?key=' + apiKey;
 
     const requestBody = {
@@ -43,9 +45,11 @@ router.post('/generate', async (req, res) => {
     const data = await response.json();
 
     if (!response.ok) {
+      console.error(`[veo/generate] VEO API error ${response.status}:`, JSON.stringify(data));
       return res.status(response.status).json({ error: data.error || data });
     }
 
+    console.log(`[veo/generate] Success: ${data.name}`);
     res.json(data);
   } catch (err) {
     console.error('[veo/generate] Error:', err.message);
