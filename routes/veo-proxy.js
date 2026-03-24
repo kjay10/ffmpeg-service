@@ -24,7 +24,7 @@ router.post('/generate', async (req, res) => {
       }],
       parameters: {
         aspectRatio: aspectRatio || '9:16',
-        personGeneration: personGeneration || 'allow_all'
+        personGeneration: personGeneration || 'allow_adult'
       }
     };
 
