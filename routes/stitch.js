@@ -8,6 +8,25 @@ const { pipeline } = require('stream/promises');
 
 const TEMP_DIR = path.join(__dirname, '..', 'tmp');
 
+// ─── Status reporting helper ───────────────────────────
+// If runId is provided, report progress to /status/update
+async function reportStatus(runId, step, progress, message, data) {
+  if (!runId) return;
+  try {
+    const baseUrl = `http://localhost:${process.env.PORT || 3001}`;
+    await fetch(`${baseUrl}/status/update`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.API_KEY || 'dev-key',
+      },
+      body: JSON.stringify({ runId, step, progress, message, data }),
+    });
+  } catch (err) {
+    console.warn(`[stitch/status] Failed to report status: ${err.message}`);
+  }
+}
+
 // ─── Helpers ───────────────────────────────────────────
 
 async function downloadFile(url, destPath, authHeader) {
@@ -174,7 +193,8 @@ router.post('/', express.json({ limit: '10mb' }), async (req, res) => {
     maxTotal: rawMaxTotal = 59.2,
     packDur: rawPackDur = 3,
     fadeDur: rawFadeDur = 1.5,
-    driveFolderId, driveAuth, fileName
+    driveFolderId, driveAuth, fileName,
+    runId
   } = req.body;
 
   const frameTimestamp = parseFloat(rawFrameTimestamp) || 0;
@@ -202,6 +222,7 @@ router.post('/', express.json({ limit: '10mb' }), async (req, res) => {
   try {
     // ── Stage 1: Download all videos ──
     stage = 'download';
+    await reportStatus(runId, 'download', 10, 'Downloading videos...');
     const sharedAuth = req.headers['x-video-auth'];
     const requestAuth = req.headers['authorization'];
 
@@ -216,6 +237,7 @@ router.post('/', express.json({ limit: '10mb' }), async (req, res) => {
 
     // ── Stage 2: Trim original from frameTimestamp ──
     stage = 'trim-original';
+    await reportStatus(runId, 'trim', 25, 'Trimming original video...');
     const origDuration = await getDuration(origRaw);
     const trimStart = parseFloat(frameTimestamp) || 0;
 
@@ -246,6 +268,7 @@ router.post('/', express.json({ limit: '10mb' }), async (req, res) => {
 
     // ── Stage 4: Normalize all clips to 1080x1920 @ 30fps ──
     stage = 'prep-hook';
+    await reportStatus(runId, 'normalize', 40, 'Normalizing clips...');
     await prepClip(hookRaw, hookPrepped, hookDuration);
 
     stage = 'prep-original';
@@ -261,6 +284,7 @@ router.post('/', express.json({ limit: '10mb' }), async (req, res) => {
 
     // ── Stage 5: Crossfade stitch ──
     stage = 'crossfade';
+    await reportStatus(runId, 'stitch', 60, 'Stitching with crossfade...');
     await crossfadeStitch(parts, outputPath, fadeDur, maxTotal);
 
     const finalDuration = await getDuration(outputPath);
@@ -271,6 +295,7 @@ router.post('/', express.json({ limit: '10mb' }), async (req, res) => {
     stage = 'deliver';
     if (driveFolderId && driveAuth) {
       stage = 'drive-upload';
+      await reportStatus(runId, 'upload', 80, 'Uploading to Google Drive...');
       const uploadFileName = fileName || 'hooked-output.mp4';
 
       const initRes = await fetch(
@@ -302,6 +327,7 @@ router.post('/', express.json({ limit: '10mb' }), async (req, res) => {
 
       const driveFile = await uploadRes.json();
       console.log(`[stitch] Uploaded to Drive: ${driveFile.id}`);
+      await reportStatus(runId, 'done', 100, 'Video ready!', { driveFileId: driveFile.id, fileName: uploadFileName });
 
       res.json({
         success: true,
@@ -327,6 +353,7 @@ router.post('/', express.json({ limit: '10mb' }), async (req, res) => {
     }
   } catch (err) {
     console.error(`[stitch] FAILED at stage=${stage}:`, err.message);
+    await reportStatus(runId, 'error', 0, `Failed at ${stage}: ${err.message}`);
     res.status(500).json({ error: err.message, stage });
   } finally {
     for (const f of allTempFiles) {
