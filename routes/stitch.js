@@ -170,12 +170,17 @@ router.post('/', express.json({ limit: '10mb' }), async (req, res) => {
   const {
     hookVideoUrl, originalVideoUrl, originalAuth,
     packshotUrl, packshotAuth,
-    frameTimestamp = 0,
-    maxTotal = 59.2,
-    packDur = 3,
-    fadeDur = 1.5,
+    frameTimestamp: rawFrameTimestamp = 0,
+    maxTotal: rawMaxTotal = 59.2,
+    packDur: rawPackDur = 3,
+    fadeDur: rawFadeDur = 1.5,
     driveFolderId, driveAuth, fileName
   } = req.body;
+
+  const frameTimestamp = parseFloat(rawFrameTimestamp) || 0;
+  const maxTotal = parseFloat(rawMaxTotal) || 59.2;
+  const packDur = parseFloat(rawPackDur) || 3;
+  const fadeDur = parseFloat(rawFadeDur) || 1.5;
 
   if (!hookVideoUrl || !originalVideoUrl) {
     return res.status(400).json({ error: 'hookVideoUrl and originalVideoUrl required' });
