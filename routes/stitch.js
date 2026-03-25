@@ -261,7 +261,9 @@ router.post('/', express.json({ limit: '10mb' }), async (req, res) => {
     const effectivePackDur = usePackshot ? packDur : 0;
 
     // How much time is available for the original?
-    const origMaxDur = Math.max(maxTotal - hookDuration - effectivePackDur, 1);
+    // Account for crossfade overlaps: each crossfade reduces total by fadeDur
+    const numFades = usePackshot ? 2 : 1; // hook→orig + orig→packshot
+    const origMaxDur = Math.max(maxTotal - hookDuration - effectivePackDur + (numFades * fadeDur), 1);
     const origUseDur = Math.min(trimmedOrigDuration, origMaxDur);
 
     console.log(`[stitch] Durations: hook=${hookDuration.toFixed(1)}s, orig=${origUseDur.toFixed(1)}s (of ${trimmedOrigDuration.toFixed(1)}s), pack=${effectivePackDur}s, total=${(hookDuration + origUseDur + effectivePackDur).toFixed(1)}s`);
