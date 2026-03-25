@@ -18,15 +18,20 @@ router.post('/generate', async (req, res) => {
     console.log(`[veo/generate] Prompt: ${prompt?.substring(0, 100)}`);
     const veoUrl = 'https://generativelanguage.googleapis.com/v1beta/models/' + veoModel + ':predictLongRunning?key=' + apiKey;
 
+    const parameters = {
+      aspectRatio: aspectRatio || '9:16'
+    };
+
+    // VEO 3.x models don't support personGeneration parameter
+    if (!veoModel.startsWith('veo-3')) {
+      parameters.personGeneration = ['allow_adult', 'dont_allow'].includes(personGeneration) ? personGeneration : 'allow_adult';
+    }
+
     const requestBody = {
       instances: [{
         prompt: prompt
       }],
-      parameters: {
-        aspectRatio: aspectRatio || '9:16',
-        // Only 'allow_adult' and 'dont_allow' are supported by Google VEO
-        personGeneration: ['allow_adult', 'dont_allow'].includes(personGeneration) ? personGeneration : 'allow_adult'
-      }
+      parameters
     };
 
     // If image provided, add it for image-to-video
