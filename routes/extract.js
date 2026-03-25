@@ -136,7 +136,13 @@ router.post('/frames', upload.single('video'), async (req, res) => {
 // Optional: x-video-auth header forwarded when downloading videoUrl
 // Returns: { image: base64, width, height }
 router.post('/frame', upload.single('video'), async (req, res) => {
-  const timestamp = parseFloat(req.body.timestamp) || 0;
+  // Strip leading "=" from n8n expression values
+  let rawTimestamp = req.body.timestamp;
+  if (typeof rawTimestamp === 'string' && rawTimestamp.startsWith('=')) {
+    rawTimestamp = rawTimestamp.substring(1);
+  }
+  const timestamp = parseFloat(rawTimestamp) || 0;
+  console.log(`[extract/frame] Requested timestamp: ${timestamp} (raw: ${req.body.timestamp})`);
   const jobId = uuidv4();
   const framePath = path.join(TEMP_DIR, `${jobId}-frame.png`);
   let videoPath;
