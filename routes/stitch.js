@@ -120,15 +120,25 @@ async function prepClip(input, output, duration, forceSilence = false) {
 
 // ─── crossfade_stitch: join 2 or 3 clips with video+audio crossfade ───
 
-async function crossfadeStitch(parts, output, fade, maxTotal) {
+async function crossfadeStitch(parts, output, fade, maxTotal, hookFade) {
   const n = parts.length;
+  // hookFade: fade between hook→original (parts[0]→parts[1])
+  // fade: fade between original→packshot (parts[1]→parts[2])
+  // If hookFade is undefined, use fade for both
+  const fade1 = hookFade !== undefined ? hookFade : fade;  // hook → original
+  const fade2 = fade;                                       // original → packshot
   let cmd, filt;
 
   if (n === 2) {
     const d0 = await getDuration(parts[0]);
-    const off1 = Math.max(d0 - fade, 0);
-    filt = `[0:v][1:v]xfade=transition=fade:duration=${fade}:offset=${off1}[outv];` +
-           `[0:a][1:a]acrossfade=d=${fade}:c1=tri:c2=tri[outa]`;
+    if (fade1 === 0) {
+      // No crossfade: simple concat
+      filt = `[0:v][1:v]concat=n=2:v=1:a=0[outv];[0:a][1:a]concat=n=2:v=0:a=1[outa]`;
+    } else {
+      const off1 = Math.max(d0 - fade1, 0);
+      filt = `[0:v][1:v]xfade=transition=fade:duration=${fade1}:offset=${off1}[outv];` +
+             `[0:a][1:a]acrossfade=d=${fade1}:c1=tri:c2=tri[outa]`;
+    }
     cmd = [
       '-y', '-i', parts[0], '-i', parts[1],
       '-filter_complex', filt,
@@ -140,12 +150,23 @@ async function crossfadeStitch(parts, output, fade, maxTotal) {
   } else if (n === 3) {
     const d0 = await getDuration(parts[0]);
     const d1 = await getDuration(parts[1]);
-    const off1 = Math.max(d0 - fade, 0);
-    const off2 = Math.max(d0 + d1 - fade * 2, 0);
-    filt = `[0:v][1:v]xfade=transition=fade:duration=${fade}:offset=${off1}[v01];` +
-           `[v01][2:v]xfade=transition=fade:duration=${fade}:offset=${off2}[outv];` +
-           `[0:a][1:a]acrossfade=d=${fade}:c1=tri:c2=tri[a01];` +
-           `[a01][2:a]acrossfade=d=${fade}:c1=tri:c2=tri[outa]`;
+
+    if (fade1 === 0) {
+      // No crossfade between hook→original, only between original→packshot
+      const concatDur = d0 + d1; // no overlap for first join
+      const off2 = Math.max(concatDur - fade2, 0);
+      filt = `[0:v][1:v]concat=n=2:v=1:a=0[v01];` +
+             `[v01][2:v]xfade=transition=fade:duration=${fade2}:offset=${off2}[outv];` +
+             `[0:a][1:a]concat=n=2:v=0:a=1[a01];` +
+             `[a01][2:a]acrossfade=d=${fade2}:c1=tri:c2=tri[outa]`;
+    } else {
+      const off1 = Math.max(d0 - fade1, 0);
+      const off2 = Math.max(d0 + d1 - fade1 - fade2, 0);
+      filt = `[0:v][1:v]xfade=transition=fade:duration=${fade1}:offset=${off1}[v01];` +
+             `[v01][2:v]xfade=transition=fade:duration=${fade2}:offset=${off2}[outv];` +
+             `[0:a][1:a]acrossfade=d=${fade1}:c1=tri:c2=tri[a01];` +
+             `[a01][2:a]acrossfade=d=${fade2}:c1=tri:c2=tri[outa]`;
+    }
     cmd = [
       '-y', '-i', parts[0], '-i', parts[1], '-i', parts[2],
       '-filter_complex', filt,
@@ -158,6 +179,7 @@ async function crossfadeStitch(parts, output, fade, maxTotal) {
     throw new Error(`crossfadeStitch: unsupported ${n} parts`);
   }
 
+  console.log(`[stitch] Crossfade: hook→orig=${fade1}s, orig→pack=${fade2}s`);
   await runCmd(cmd);
 }
 
@@ -193,6 +215,7 @@ router.post('/', express.json({ limit: '10mb' }), async (req, res) => {
     maxTotal: rawMaxTotal = 59.2,
     packDur: rawPackDur = 3,
     fadeDur: rawFadeDur = 1.5,
+    hookFadeDur: rawHookFadeDur,
     driveFolderId, driveAuth, fileName,
     runId
   } = req.body;
@@ -201,6 +224,8 @@ router.post('/', express.json({ limit: '10mb' }), async (req, res) => {
   const maxTotal = parseFloat(rawMaxTotal) || 59.2;
   const packDur = parseFloat(rawPackDur) || 3;
   const fadeDur = parseFloat(rawFadeDur) || 1.5;
+  // hookFadeDur: fade between hook→original. Defaults to fadeDur. Set to 0 for first/last frame mode.
+  const hookFadeDur = rawHookFadeDur !== undefined ? (parseFloat(rawHookFadeDur) || 0) : fadeDur;
 
   if (!hookVideoUrl || !originalVideoUrl) {
     return res.status(400).json({ error: 'hookVideoUrl and originalVideoUrl required' });
@@ -261,12 +286,13 @@ router.post('/', express.json({ limit: '10mb' }), async (req, res) => {
     const effectivePackDur = usePackshot ? packDur : 0;
 
     // How much time is available for the original?
-    // Account for crossfade overlaps: each crossfade reduces total by fadeDur
-    const numFades = usePackshot ? 2 : 1; // hook→orig + orig→packshot
-    const origMaxDur = Math.max(maxTotal - hookDuration - effectivePackDur + (numFades * fadeDur), 1);
+    // Account for crossfade overlaps: each crossfade reduces total by its fadeDur
+    const hookOverlap = hookFadeDur;  // hook→orig overlap
+    const packOverlap = usePackshot ? fadeDur : 0;  // orig→pack overlap
+    const origMaxDur = Math.max(maxTotal - hookDuration - effectivePackDur + hookOverlap + packOverlap, 1);
     const origUseDur = Math.min(trimmedOrigDuration, origMaxDur);
 
-    console.log(`[stitch] Durations: hook=${hookDuration.toFixed(1)}s, orig=${origUseDur.toFixed(1)}s (of ${trimmedOrigDuration.toFixed(1)}s), pack=${effectivePackDur}s, total=${(hookDuration + origUseDur + effectivePackDur).toFixed(1)}s`);
+    console.log(`[stitch] Durations: hook=${hookDuration.toFixed(1)}s, orig=${origUseDur.toFixed(1)}s (of ${trimmedOrigDuration.toFixed(1)}s), pack=${effectivePackDur}s, hookFade=${hookFadeDur}s, packFade=${fadeDur}s, total=${(hookDuration + origUseDur + effectivePackDur).toFixed(1)}s`);
 
     // ── Stage 4: Normalize all clips to 1080x1920 @ 30fps ──
     stage = 'prep-hook';
@@ -287,7 +313,7 @@ router.post('/', express.json({ limit: '10mb' }), async (req, res) => {
     // ── Stage 5: Crossfade stitch ──
     stage = 'crossfade';
     await reportStatus(runId, 'stitch', 60, 'Stitching with crossfade...');
-    await crossfadeStitch(parts, outputPath, fadeDur, maxTotal);
+    await crossfadeStitch(parts, outputPath, fadeDur, maxTotal, hookFadeDur);
 
     const finalDuration = await getDuration(outputPath);
     const finalSize = fs.statSync(outputPath).size;

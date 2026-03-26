@@ -7,7 +7,7 @@ const router = express.Router();
 // POST /veo/generate - Submit a VEO video generation job
 router.post('/generate', async (req, res) => {
   try {
-    const { apiKey, prompt, imageBase64, imageMimeType, aspectRatio, model, personGeneration } = req.body;
+    const { apiKey, prompt, imageBase64, imageMimeType, lastFrameBase64, lastFrameMimeType, aspectRatio, model, personGeneration } = req.body;
 
     if (!apiKey) return res.status(400).json({ error: 'apiKey is required' });
     if (!prompt) return res.status(400).json({ error: 'prompt is required' });
@@ -34,12 +34,21 @@ router.post('/generate', async (req, res) => {
       parameters
     };
 
-    // If image provided, add it for image-to-video
+    // If image provided, add it for image-to-video (first frame)
     if (imageBase64) {
       requestBody.instances[0].image = {
         bytesBase64Encoded: imageBase64,
         mimeType: imageMimeType || 'image/png'
       };
+    }
+
+    // If last frame provided (VEO 3.1 first+last frame mode)
+    if (lastFrameBase64) {
+      requestBody.instances[0].lastFrame = {
+        bytesBase64Encoded: lastFrameBase64,
+        mimeType: lastFrameMimeType || 'image/png'
+      };
+      console.log(`[veo/generate] Last frame provided: ${lastFrameBase64.length} chars, mimeType: ${lastFrameMimeType || 'image/png'}`);
     }
 
     const response = await fetch(veoUrl, {
