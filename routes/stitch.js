@@ -152,14 +152,40 @@ async function crossfadeStitch(parts, output, fade, maxTotal, hookFade) {
     const d1 = await getDuration(parts[1]);
 
     if (fade1 === 0) {
-      // No crossfade between hook→original, only between original→packshot
-      // settb=1/AVTB normalizes timebase after concat so xfade works
-      const concatDur = d0 + d1; // no overlap for first join
+      // Two-pass approach: first concat hook+original, then xfade with packshot
+      // This avoids timebase mismatch issues between concat output and xfade
+      const concatTmp = output.replace('-output.mp4', '-concat-tmp.mp4');
+      console.log(`[stitch] Two-pass: concat hook+original first, then xfade packshot`);
+
+      // Pass 1: concat hook + original (no crossfade)
+      await runCmd([
+        '-y', '-i', parts[0], '-i', parts[1],
+        '-filter_complex', '[0:v][1:v]concat=n=2:v=1:a=0[outv];[0:a][1:a]concat=n=2:v=0:a=1[outa]',
+        '-map', '[outv]', '-map', '[outa]',
+        '-c:v', 'libx264', '-preset', 'fast', '-c:a', 'aac', '-ar', '44100', '-ac', '2',
+        '-r', '30', '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart', concatTmp
+      ]);
+
+      // Pass 2: xfade concat result with packshot
+      const concatDur = await getDuration(concatTmp);
       const off2 = Math.max(concatDur - fade2, 0);
-      filt = `[0:v][1:v]concat=n=2:v=1:a=0,settb=1/AVTB[v01];` +
-             `[v01][2:v]xfade=transition=fade:duration=${fade2}:offset=${off2}[outv];` +
-             `[0:a][1:a]concat=n=2:v=0:a=1[a01];` +
-             `[a01][2:a]acrossfade=d=${fade2}:c1=tri:c2=tri[outa]`;
+      const filt2 = `[0:v][1:v]xfade=transition=fade:duration=${fade2}:offset=${off2}[outv];` +
+                     `[0:a][1:a]acrossfade=d=${fade2}:c1=tri:c2=tri[outa]`;
+      cmd = [
+        '-y', '-i', concatTmp, '-i', parts[2],
+        '-filter_complex', filt2,
+        '-map', '[outv]', '-map', '[outa]',
+        '-t', String(maxTotal),
+        '-c:v', 'libx264', '-preset', 'fast', '-c:a', 'aac',
+        '-movflags', '+faststart', '-shortest', output
+      ];
+
+      // Clean up temp file after stitch
+      console.log(`[stitch] Crossfade: hook→orig=0s (concat), orig→pack=${fade2}s`);
+      await runCmd(cmd);
+      fs.rmSync(concatTmp, { force: true });
+      return; // skip the final runCmd below
     } else {
       const off1 = Math.max(d0 - fade1, 0);
       const off2 = Math.max(d0 + d1 - fade1 - fade2, 0);
@@ -241,7 +267,8 @@ router.post('/', express.json({ limit: '10mb' }), async (req, res) => {
   const origPrepped = path.join(TEMP_DIR, `${jobId}-orig-prep.mp4`);
   const packPrepped = path.join(TEMP_DIR, `${jobId}-pack-prep.mp4`);
   const outputPath = path.join(TEMP_DIR, `${jobId}-output.mp4`);
-  const allTempFiles = [hookRaw, origRaw, origTrimmed, packRaw, hookPrepped, origPrepped, packPrepped, outputPath];
+  const concatTmpPath = path.join(TEMP_DIR, `${jobId}-concat-tmp.mp4`);
+  const allTempFiles = [hookRaw, origRaw, origTrimmed, packRaw, hookPrepped, origPrepped, packPrepped, concatTmpPath, outputPath];
 
   let stage = 'init';
 
