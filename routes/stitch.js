@@ -153,9 +153,10 @@ async function crossfadeStitch(parts, output, fade, maxTotal, hookFade) {
 
     if (fade1 === 0) {
       // No crossfade between hook→original, only between original→packshot
+      // settb=1/AVTB normalizes timebase after concat so xfade works
       const concatDur = d0 + d1; // no overlap for first join
       const off2 = Math.max(concatDur - fade2, 0);
-      filt = `[0:v][1:v]concat=n=2:v=1:a=0[v01];` +
+      filt = `[0:v][1:v]concat=n=2:v=1:a=0,settb=1/AVTB[v01];` +
              `[v01][2:v]xfade=transition=fade:duration=${fade2}:offset=${off2}[outv];` +
              `[0:a][1:a]concat=n=2:v=0:a=1[a01];` +
              `[a01][2:a]acrossfade=d=${fade2}:c1=tri:c2=tri[outa]`;
