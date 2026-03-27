@@ -36,30 +36,19 @@ router.post('/generate', async (req, res) => {
       parameters
     };
 
-    // VEO 2.x uses bytesBase64Encoded format, VEO 3.x uses inlineData format
+    // All VEO models use bytesBase64Encoded format via predictLongRunning
     if (imageBase64) {
-      if (isVeo3) {
-        requestBody.instances[0].image = {
-          inlineData: {
-            data: imageBase64,
-            mimeType: imageMimeType || 'image/png'
-          }
-        };
-      } else {
-        requestBody.instances[0].image = {
-          bytesBase64Encoded: imageBase64,
-          mimeType: imageMimeType || 'image/png'
-        };
-      }
+      requestBody.instances[0].image = {
+        bytesBase64Encoded: imageBase64,
+        mimeType: imageMimeType || 'image/png'
+      };
     }
 
     // If last frame provided (VEO 3.x first+last frame mode)
     if (lastFrameBase64 && isVeo3) {
       requestBody.instances[0].lastFrame = {
-        inlineData: {
-          data: lastFrameBase64,
-          mimeType: lastFrameMimeType || 'image/png'
-        }
+        bytesBase64Encoded: lastFrameBase64,
+        mimeType: lastFrameMimeType || 'image/png'
       };
       console.log(`[veo/generate] Last frame provided: ${lastFrameBase64.length} chars, mimeType: ${lastFrameMimeType || 'image/png'}`);
     }
