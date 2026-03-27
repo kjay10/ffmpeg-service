@@ -27,6 +27,8 @@ router.post('/generate', async (req, res) => {
       parameters.personGeneration = ['allow_adult', 'dont_allow'].includes(personGeneration) ? personGeneration : 'allow_adult';
     }
 
+    const isVeo3 = veoModel.startsWith('veo-3');
+
     const requestBody = {
       instances: [{
         prompt: prompt
@@ -34,19 +36,30 @@ router.post('/generate', async (req, res) => {
       parameters
     };
 
-    // If image provided, add it for image-to-video (first frame)
+    // VEO 2.x uses bytesBase64Encoded format, VEO 3.x uses inlineData format
     if (imageBase64) {
-      requestBody.instances[0].image = {
-        bytesBase64Encoded: imageBase64,
-        mimeType: imageMimeType || 'image/png'
-      };
+      if (isVeo3) {
+        requestBody.instances[0].image = {
+          inlineData: {
+            data: imageBase64,
+            mimeType: imageMimeType || 'image/png'
+          }
+        };
+      } else {
+        requestBody.instances[0].image = {
+          bytesBase64Encoded: imageBase64,
+          mimeType: imageMimeType || 'image/png'
+        };
+      }
     }
 
-    // If last frame provided (VEO 3.1 first+last frame mode)
-    if (lastFrameBase64) {
+    // If last frame provided (VEO 3.x first+last frame mode)
+    if (lastFrameBase64 && isVeo3) {
       requestBody.instances[0].lastFrame = {
-        bytesBase64Encoded: lastFrameBase64,
-        mimeType: lastFrameMimeType || 'image/png'
+        inlineData: {
+          data: lastFrameBase64,
+          mimeType: lastFrameMimeType || 'image/png'
+        }
       };
       console.log(`[veo/generate] Last frame provided: ${lastFrameBase64.length} chars, mimeType: ${lastFrameMimeType || 'image/png'}`);
     }
